@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Låst side</title>
+<style>
+:root{--bg:#011732;--card:#FFFFFF;--ink:#0B1628;--muted:#5B6176;--red:#BA0C14;--gold:#F0AB2E}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#F2F3F7}
+#laas{min-height:100vh;display:grid;place-items:center;background:var(--bg);padding:24px max(16px,env(safe-area-inset-left,0px))}
+#laas form{background:var(--card);border-radius:18px;padding:28px 24px;width:min(100%,380px);display:grid;gap:12px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+#laas h1{margin:0;font-size:22px}
+#laas p{margin:0;color:var(--muted);font-size:14px}
+#laas input[type=password]{font:inherit;padding:12px 14px;border:1px solid #CDD2DE;border-radius:10px;width:100%}
+#laas label.husk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--muted)}
+#laas button{font:700 16px system-ui,sans-serif;padding:12px;border:0;border-radius:10px;background:var(--bg);color:#fff;cursor:pointer}
+#laas button:disabled{opacity:.6;cursor:wait}
+#fejl{color:var(--red);font-weight:600;min-height:1.5em}
+.band{height:5px;background:linear-gradient(90deg,var(--red) 0 50%,#00217D 50% 100%);border-radius:3px}
+#laas-af{position:fixed;right:max(12px,env(safe-area-inset-right,0px));bottom:max(12px,env(safe-area-inset-bottom,0px));z-index:50;font:600 13px system-ui,sans-serif;border:0;border-radius:99px;padding:8px 14px;background:#011732;color:#fff;cursor:pointer;opacity:.85}
+</style>
+</head>
+<body>
+<div id="laas">
+  <form id="form" autocomplete="off">
+    <div class="band"></div>
+    <h1>Studenterkassen – markedsføring</h1>
+    <p>Siden er låst. Skriv koden for at åbne den.</p>
+    <input type="password" id="kode" placeholder="Kode" autocomplete="current-password" required autofocus>
+    <label class="husk"><input type="checkbox" id="husk"> Husk koden på denne enhed</label>
+    <button type="submit" id="knap">Åbn</button>
+    <div id="fejl" role="alert"></div>
+  </form>
+</div>
+<div id="indhold" hidden></div>
+<script>
+(function () {
+  var ITER = 600000, NOEGLE_LS = "sk-marketing-noegle";
+  var noegle = null, filer = {}, cache = {};
+  var fejl = document.getElementById("fejl"), knap = document.getElementById("knap");
+
+  function b64(s) { var b = atob(s.trim()), a = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+  async function hent(url) { var r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error("Kunne ikke hente " + url); return new Uint8Array(await r.arrayBuffer()); }
+  async function dekrypter(data) { return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(0, 12) }, noegle, data.slice(12))); }
+  async function udled(kode) {
+    var salt = b64(await (await fetch("salt.txt", { cache: "no-cache" })).text());
+    var base = await crypto.subtle.importKey("raw", new TextEncoder().encode(kode), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: salt, iterations: ITER }, base, { name: "AES-GCM", length: 256 }, true, ["decrypt"]);
+  }
+  async function blobUrl(sti) {
+    if (cache[sti]) return cache[sti];
+    var f = filer[sti]; if (!f) return null;
+    cache[sti] = (async function () { var d = await dekrypter(await hent(f.f)); return URL.createObjectURL(new Blob([d], { type: f.t })); })();
+    return cache[sti];
+  }
+
+  async function aabn() {
+    var pakke = JSON.parse(new TextDecoder().decode(await dekrypter(await hent("side.bin"))));
+    filer = pakke.filer;
+    var ind = document.getElementById("indhold");
+    ind.innerHTML = pakke.html;
+    var t = ind.querySelector("title"); if (t) document.title = t.textContent;
+    // scripts i den indsatte side skal genskabes for at køre
+    ind.querySelectorAll("script").forEach(function (s) { var n = document.createElement("script"); n.textContent = s.textContent; s.replaceWith(n); });
+    document.getElementById("laas").remove(); ind.hidden = false;
+    var af = document.createElement("button"); af.id = "laas-af"; af.textContent = "Lås"; af.type = "button";
+    af.onclick = function () { try { localStorage.removeItem(NOEGLE_LS); } catch (e) {} location.reload(); };
+    document.body.appendChild(af);
+
+    // billeder og forhåndsbilleder: dekrypteres når de nærmer sig skærmen
+    var io = new IntersectionObserver(function (ent) {
+      ent.forEach(function (e) {
+        if (!e.isIntersecting) return; io.unobserve(e.target); var el = e.target;
+        ["src", "poster"].forEach(function (a) {
+          var sti = el.getAttribute("data-enc-" + a); if (!sti) return;
+          blobUrl(sti).then(function (u) { if (u) el.setAttribute(a, u); }).catch(function () {});
+        });
+      });
+    }, { rootMargin: "600px" });
+    ind.querySelectorAll("img[src], video[poster]").forEach(function (el) {
+      ["src", "poster"].forEach(function (a) {
+        var v = el.getAttribute(a);
+        if (v && filer[v] && !(el.tagName === "VIDEO" && a === "src")) { el.setAttribute("data-enc-" + a, v); el.removeAttribute(a); }
+      });
+      io.observe(el);
+    });
+    // videoer: hentes først når man trykker på dem
+    ind.querySelectorAll("video[src]").forEach(function (v) {
+      var sti = v.getAttribute("src"); if (!filer[sti]) return;
+      v.removeAttribute("src"); v.dataset.encVideo = sti; v.preload = "none";
+      var start = function (ev) {
+        if (v.dataset.loaded) return; ev.preventDefault(); v.dataset.loaded = "1";
+        blobUrl(sti).then(function (u) { v.src = u; v.play().catch(function () {}); });
+      };
+      v.addEventListener("click", start); v.addEventListener("play", start);
+    });
+    // links til filer (fuld størrelse, PDF, SVG …)
+    ind.addEventListener("click", function (ev) {
+      var a = ev.target.closest("a[href]"); if (!a) return;
+      var sti = a.getAttribute("href"); if (!filer[sti]) return;
+      ev.preventDefault();
+      var w = window.open("", "_blank");
+      blobUrl(sti).then(function (u) { if (w) w.location = u; else location.href = u; });
+    });
+    if (location.hash) { var m = document.getElementById(location.hash.slice(1)); if (m) m.scrollIntoView(); }
+  }
+
+  async function proev(kode, husk) {
+    noegle = await udled(kode);
+    try { await aabn(); } catch (e) { noegle = null; throw e; }
+    if (husk) { try { localStorage.setItem(NOEGLE_LS, JSON.stringify(await crypto.subtle.exportKey("jwk", noegle))); } catch (e) {} }
+  }
+
+  document.getElementById("form").addEventListener("submit", async function (ev) {
+    ev.preventDefault(); fejl.textContent = ""; knap.disabled = true; knap.textContent = "Åbner …";
+    try { await proev(document.getElementById("kode").value, document.getElementById("husk").checked); }
+    catch (e) { fejl.textContent = "Forkert kode – prøv igen."; knap.disabled = false; knap.textContent = "Åbn"; }
+  });
+
+  // husket nøgle
+  (async function () {
+    var gemt = null; try { gemt = localStorage.getItem(NOEGLE_LS); } catch (e) {}
+    if (!gemt) return;
+    try { noegle = await crypto.subtle.importKey("jwk", JSON.parse(gemt), { name: "AES-GCM" }, true, ["decrypt"]); await aabn(); }
+    catch (e) { noegle = null; try { localStorage.removeItem(NOEGLE_LS); } catch (x) {} }
+  })();
+})();
+</script>
+</body>
+</html>
