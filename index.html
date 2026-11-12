@@ -101,6 +101,10 @@ body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:
       var a = ev.target.closest("a[href]"); if (!a) return;
       var sti = a.getAttribute("href"); if (!filer[sti]) return;
       ev.preventDefault();
+      if (a.hasAttribute("download")) {   // "Hent fil": gem filen i stedet for at åbne den
+        blobUrl(sti).then(function (u) { var d = document.createElement("a"); d.href = u; d.download = sti.split("/").pop(); document.body.appendChild(d); d.click(); d.remove(); });
+        return;
+      }
       var w = window.open("", "_blank");
       blobUrl(sti).then(function (u) { if (w) w.location = u; else location.href = u; });
     });
